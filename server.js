@@ -1,75 +1,79 @@
+require('dotenv').config();
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const cors = require('cors');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Initialize DB
-const db = new sqlite3.Database('./database.db', (err) => {
-    if (err) {
-        console.error('Database connection error:', err.message);
-    } else {
-        console.log('Connected to the SQLite database.');
-        db.run(`CREATE TABLE IF NOT EXISTS messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )`);
+// Database Connection
+const DATABASE_URL = process.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+    console.error('FATAL ERROR: DATABASE_URL is not defined in environment variables.');
+    process.exit(1);
+}
+
+const pool = new Pool({
+    connectionString: DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false // Required for many managed Postgres services like Neon
     }
 });
 
+// Initialize DB Table
+pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+`).then(() => console.log('Connected to PostgreSQL and verified table.'))
+  .catch(err => console.error('Database initialization error:', err));
+
 // Get messages (newest first)
-app.get('/api/messages', (req, res) => {
-    db.all('SELECT * FROM messages ORDER BY created_at DESC', [], (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ messages: rows });
-    });
+app.get('/api/messages', async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM messages ORDER BY created_at DESC');
+        res.json({ messages: result.rows });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Post a new message
-app.post('/api/messages', (req, res) => {
+app.post('/api/messages', async (req, res) => {
     const { content } = req.body;
     if (!content || content.trim() === '') {
         res.status(400).json({ error: 'Content is required' });
         return;
     }
     
-    const stmt = db.prepare('INSERT INTO messages (content) VALUES (?)');
-    stmt.run([content.trim()], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.status(201).json({ 
-            id: this.lastID, 
-            content: content.trim(),
-            created_at: new Date().toISOString()
-        });
-    });
-    stmt.finalize();
+    try {
+        const result = await pool.query(
+            'INSERT INTO messages (content) VALUES ($1) RETURNING *',
+            [content.trim()]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Delete a message
-app.delete('/api/messages/:id', (req, res) => {
+app.delete('/api/messages/:id', async (req, res) => {
     const id = req.params.id;
-    const stmt = db.prepare('DELETE FROM messages WHERE id = ?');
-    stmt.run([id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
+    try {
+        await pool.query('DELETE FROM messages WHERE id = $1', [id]);
         res.status(200).json({ success: true, deletedID: id });
-    });
-    stmt.finalize();
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.listen(PORT, () => {
