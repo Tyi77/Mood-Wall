@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>心情留言板</title>
+    <meta name="description" content="歡迎來到為你設計的留言板，匿名寫下屬於你最真實的想法。">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>心情留言板</h1>
+            <div class="intro-text">
+                <p>歡迎來到為你設計的留言板</p>
+                <p>匿名寫下屬於你最真實的想法</p>
+                <p>讓我們一起分擔你的心情</p>
+                <p>與你討論可行的辦法吧～</p>
+            </div>
+        </header>
+
+        <main>
+            <section class="form-section">
+                <form id="moodForm">
+                    <textarea id="moodInput" placeholder="寫下你的心情..." required></textarea>
+                    <button type="submit" id="submitBtn">送出留言</button>
+                </form>
+            </section>
+
+            <section class="wall-section">
+                <h2>大家的留言</h2>
+                <div id="messagesContainer" class="messages-container">
+                    <!-- Messages will be injected here -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
