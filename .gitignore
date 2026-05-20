@@ -1,4 +1,5 @@
 .agents/
 node_modules/
-database.db
+*.db
 .env
+.DS_Store
