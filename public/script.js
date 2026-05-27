@@ -19,14 +19,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const container = document.getElementById('messagesContainer');
     const submitBtn = document.getElementById('submitBtn');
 
-    // Local state for messages and pagination
-    let localMessages = [];
-    let lastDoc = null;
-    let hasMore = true;
+    // Pagination & Cache States
     const PAGE_LIMIT = 20;
+    let cachedPages = [];        // Array of arrays storing messages per page
+    let documentPointers = [null]; // Firestore doc pointers for pagination boundaries
+    let currentPage = 0;         // Current active page index (0-indexed)
+    let hasMoreInDB = true;      // Is there potentially more data in Firestore?
 
-    // Load initial messages on page load
-    fetchMessages(false);
+    // Load initial page (Page 1)
+    goToPage(0);
 
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -39,7 +40,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         try {
             // Find the maximum original_id in Firestore to continue the sequence
-            // This consumes only 1 read because of .limit(1) and indexing
+            // Consumes only 1 read thanks to index and .limit(1)
             let nextId = 1;
             const querySnapshot = await messagesRef.orderBy('original_id', 'desc').limit(1).get();
             if (!querySnapshot.empty) {
@@ -54,80 +55,127 @@ document.addEventListener('DOMContentLoaded', () => {
             const newMsg = {
                 id: tempId,
                 content: content,
-                created_at: { toDate: () => new Date() }, // Mock toDate for instant rendering
+                created_at: { toDate: () => new Date() }, // Mock toDate for instant local rendering
                 original_id: nextId
             };
 
-            // 1. Optimistic Update: Add to the top of our local state immediately
-            localMessages.unshift(newMsg);
-            renderMessages(localMessages);
+            // 1. Optimistic Update: Insert into Page 1 Cache locally
+            if (!cachedPages[0]) {
+                cachedPages[0] = [];
+            }
+            cachedPages[0].unshift(newMsg);
 
-            // 2. Clear input immediately for instant responsiveness
+            // If Page 1 now exceeds the limit, pop the last item to keep it at PAGE_LIMIT
+            if (cachedPages[0].length > PAGE_LIMIT) {
+                cachedPages[0].pop();
+            }
+
+            // 2. Clear subsequent cached pages to keep state clean and consistent when shifted
+            cachedPages = [cachedPages[0]];
+            documentPointers = [null, cachedPages[0].length > 0 ? documentPointers[1] : null]; 
+            hasMoreInDB = true; // Set to true to force refetch next page when navigating
+
+            // 3. Clear input & go/stay on Page 1 with instant render
             input.value = '';
+            currentPage = 0;
+            renderMessages(cachedPages[0]);
+            renderPaginationControls();
 
-            // 3. Perform write in the background (0 reads, 1 write)
+            // 4. Perform database write in the background (0 reads, 1 write)
             const docRef = await messagesRef.add({
                 content: content,
                 created_at: firebase.firestore.FieldValue.serverTimestamp(),
                 original_id: nextId
             });
 
-            // 4. Update the temporary ID with the real Firestore ID
-            const tempIndex = localMessages.findIndex(m => m.id === tempId);
+            // 5. Update the temporary ID with the real Firestore ID
+            const tempIndex = cachedPages[0].findIndex(m => m.id === tempId);
             if (tempIndex !== -1) {
-                localMessages[tempIndex].id = docRef.id;
+                cachedPages[0][tempIndex].id = docRef.id;
+                // Update the next document pointer for Page 2
+                documentPointers[1] = cachedPages[0][cachedPages[0].length - 1];
             }
         } catch (error) {
             console.error('Error posting message:', error);
             alert('發生錯誤，無法送出留言。(' + error.code + ')');
-            // Re-fetch in case of error to sync state
-            await fetchMessages(false);
+            // Re-fetch Page 1 from network to sync
+            cachedPages = [];
+            documentPointers = [null];
+            hasMoreInDB = true;
+            await goToPage(0);
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = '送出留言';
         }
     });
 
-    async function fetchMessages(isLoadMore = false) {
+    async function goToPage(pageIndex) {
+        if (pageIndex < 0) return;
+
+        // --- OPTIMIZATION (CLIENT-SIDE CACHE) ---
+        // If this page's messages are already in memory, display them instantly (0 reads!)
+        if (cachedPages[pageIndex]) {
+            currentPage = pageIndex;
+            renderMessages(cachedPages[pageIndex]);
+            renderPaginationControls();
+            
+            // Scroll smoothly back to top of the comment section
+            if (pageIndex > 0) {
+                document.querySelector('.wall-section').scrollIntoView({ behavior: 'smooth' });
+            }
+            return;
+        }
+
+        // If we don't have it cached, and we know there is no more data, do nothing
+        if (pageIndex > 0 && !hasMoreInDB) return;
+
+        // Fetching next page from Firestore
+        const prevPointer = documentPointers[pageIndex];
+
         try {
             let query = messagesRef.orderBy('created_at', 'desc').limit(PAGE_LIMIT);
-            
-            if (isLoadMore && lastDoc) {
-                query = messagesRef.orderBy('created_at', 'desc').startAfter(lastDoc).limit(PAGE_LIMIT);
+            if (prevPointer) {
+                query = messagesRef.orderBy('created_at', 'desc').startAfter(prevPointer).limit(PAGE_LIMIT);
             }
 
             const snapshot = await query.get();
-            
+
             if (snapshot.empty) {
-                if (!isLoadMore) {
-                    localMessages = [];
-                    hasMore = false;
-                    renderMessages(localMessages);
+                hasMoreInDB = false;
+                if (pageIndex === 0) {
+                    cachedPages[0] = [];
+                    currentPage = 0;
+                    renderMessages([]);
+                    renderPaginationControls();
                 } else {
-                    hasMore = false;
-                    renderMessages(localMessages); // Re-render to update the Load More button
+                    // Update controls to disable the Next button since no more pages
+                    renderPaginationControls();
                 }
                 return;
             }
 
-            // Save the last document for pagination
-            lastDoc = snapshot.docs[snapshot.docs.length - 1];
-            hasMore = snapshot.docs.length === PAGE_LIMIT;
+            // Save the boundary pointer for next page
+            documentPointers[pageIndex + 1] = snapshot.docs[snapshot.docs.length - 1];
+            hasMoreInDB = snapshot.docs.length === PAGE_LIMIT;
 
-            const fetchedMessages = snapshot.docs.map(doc => ({
+            const pageMessages = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
 
-            if (isLoadMore) {
-                localMessages = [...localMessages, ...fetchedMessages];
-            } else {
-                localMessages = fetchedMessages;
-            }
+            // Store in our memory cache
+            cachedPages[pageIndex] = pageMessages;
+            currentPage = pageIndex;
 
-            renderMessages(localMessages);
+            renderMessages(pageMessages);
+            renderPaginationControls();
+
+            // Smooth scroll on page change
+            if (pageIndex > 0) {
+                document.querySelector('.wall-section').scrollIntoView({ behavior: 'smooth' });
+            }
         } catch (error) {
-            console.error('Error fetching messages:', error);
+            console.error('Error fetching page:', error);
             container.innerHTML = '<p style="color: #ffb347; text-align: center;">無法載入留言：' + error.code + ' - ' + error.message + '</p>';
         }
     }
@@ -172,17 +220,34 @@ document.addEventListener('DOMContentLoaded', () => {
                     try {
                         const targetId = msg.id;
 
-                        // 1. Optimistic Update: Remove from local state immediately
-                        localMessages = localMessages.filter(m => m.id !== targetId);
-                        renderMessages(localMessages);
+                        // 1. Optimistic Update: Remove from local cache immediately
+                        cachedPages[currentPage] = cachedPages[currentPage].filter(m => m.id !== targetId);
+                        
+                        // Clear subsequent caches to preserve correctness
+                        cachedPages = cachedPages.slice(0, currentPage + 1);
+                        documentPointers = documentPointers.slice(0, currentPage + 2);
+                        if (cachedPages[currentPage].length > 0) {
+                            documentPointers[currentPage + 1] = cachedPages[currentPage][cachedPages[currentPage].length - 1];
+                        }
+                        hasMoreInDB = true;
+
+                        // Render immediately
+                        renderMessages(cachedPages[currentPage]);
+                        renderPaginationControls();
+
+                        // If the page became empty, go to the previous page if available
+                        if (cachedPages[currentPage].length === 0 && currentPage > 0) {
+                            goToPage(currentPage - 1);
+                        }
 
                         // 2. Perform delete in the background (0 reads, 1 write)
                         await messagesRef.doc(targetId).delete();
                     } catch (error) {
                         console.error('Error deleting message:', error);
                         alert('發生錯誤，無法刪除留言。');
-                        // Re-fetch in case of error to sync state
-                        await fetchMessages(false);
+                        // Re-fetch current page to sync state on error
+                        cachedPages = cachedPages.slice(0, currentPage);
+                        await goToPage(currentPage);
                     }
                 }
             };
@@ -197,19 +262,49 @@ document.addEventListener('DOMContentLoaded', () => {
 
             container.appendChild(card);
         });
+    }
 
-        // Add a beautiful Load More button if there are more messages to load
-        if (hasMore) {
-            const loadMoreBtn = document.createElement('button');
-            loadMoreBtn.className = 'load-more-btn';
-            loadMoreBtn.style.marginTop = '20px';
-            loadMoreBtn.textContent = '載入更多留言';
-            loadMoreBtn.onclick = async () => {
-                loadMoreBtn.disabled = true;
-                loadMoreBtn.textContent = '載入中...';
-                await fetchMessages(true);
-            };
-            container.appendChild(loadMoreBtn);
+    function renderPaginationControls() {
+        const topContainer = document.getElementById('paginationTop');
+        const bottomContainer = document.getElementById('paginationBottom');
+
+        // Clear both containers
+        topContainer.innerHTML = '';
+        bottomContainer.innerHTML = '';
+
+        // If there are no messages, don't show pagination UI at all
+        if (!cachedPages[0] || cachedPages[0].length === 0) {
+            return;
         }
+
+        const createControls = () => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'pagination-wrapper';
+
+            const prevBtn = document.createElement('button');
+            prevBtn.className = 'pag-btn';
+            prevBtn.innerHTML = '&lt;'; // '<'
+            prevBtn.disabled = currentPage === 0;
+            prevBtn.onclick = () => goToPage(currentPage - 1);
+
+            const indicator = document.createElement('span');
+            indicator.className = 'pag-indicator';
+            indicator.textContent = `第 ${currentPage + 1} 頁`;
+
+            const nextBtn = document.createElement('button');
+            nextBtn.className = 'pag-btn';
+            nextBtn.innerHTML = '&gt;'; // '>'
+            nextBtn.disabled = !hasMoreInDB && currentPage === (cachedPages.length - 1);
+            nextBtn.onclick = () => goToPage(currentPage + 1);
+
+            wrapper.appendChild(prevBtn);
+            wrapper.appendChild(indicator);
+            wrapper.appendChild(nextBtn);
+
+            return wrapper;
+        };
+
+        topContainer.appendChild(createControls());
+        bottomContainer.appendChild(createControls());
     }
 });
