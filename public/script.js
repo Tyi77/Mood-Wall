@@ -32,9 +32,20 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.textContent = '送出中...';
 
         try {
+            // Find the maximum original_id in Firestore to continue the sequence
+            let nextId = 1;
+            const querySnapshot = await messagesRef.orderBy('original_id', 'desc').limit(1).get();
+            if (!querySnapshot.empty) {
+                const maxDoc = querySnapshot.docs[0].data();
+                if (maxDoc.original_id !== undefined && maxDoc.original_id !== null) {
+                    nextId = Number(maxDoc.original_id) + 1;
+                }
+            }
+
             await messagesRef.add({
                 content: content,
-                created_at: firebase.firestore.FieldValue.serverTimestamp()
+                created_at: firebase.firestore.FieldValue.serverTimestamp(),
+                original_id: nextId
             });
             input.value = '';
             // Refresh messages after posting
