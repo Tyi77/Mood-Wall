@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /messages/{messageId} {
+      // Anyone can read messages
+      allow read: if true;
+      // Anyone can create messages (anonymous wall)
+      allow create: if true;
+      // Anyone can delete messages
+      allow delete: if true;
+      // No one can update existing messages
+      allow update: if false;
+    }
+  }
+}
