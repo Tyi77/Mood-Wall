@@ -15,11 +15,21 @@
     <div class="container">
         <header>
             <h1>心情留言板</h1>
-            <div class="intro-text">
-                <p>歡迎來到為你設計的留言板</p>
-                <p>匿名寫下屬於你最真實的想法</p>
-                <p>讓我們一起分擔你的心情</p>
-                <p>與你討論可行的辦法吧～</p>
+            <div class="hero-panels">
+                <div class="intro-text">
+                    <p>歡迎來到為你設計的留言板</p>
+                    <p>匿名寫下屬於你最真實的想法</p>
+                    <p>讓我們一起分擔你的心情</p>
+                    <p>與你討論可行的辦法吧～</p>
+                </div>
+
+                <section class="verse-panel" aria-labelledby="versePanelTitle">
+                    <div class="verse-panel__head">
+                        <p class="verse-panel__eyebrow" id="versePanelTitle">每日一經句</p>
+                        <p class="verse-panel__subtext">把情緒交給文字，也把盼望交給經文。</p>
+                    </div>
+                    <img src="eVerses.jpeg" alt="Bible verse feelings chart，依照不同情緒對應的經文圖表" class="verse-panel__image">
+                </section>
             </div>
         </header>
 
@@ -45,6 +55,6 @@
     <!-- Firebase SDK (compat for simplicity) -->
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-    <script src="script.js?v=6"></script>
+    <script src="script.js?v=7"></script>
 </body>
 </html>
